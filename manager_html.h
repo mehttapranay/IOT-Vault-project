@@ -41,7 +41,6 @@ const char manager_html[] PROGMEM = R"rawliteral(
   .stat-value.green { color: var(--vault-green); } .stat-value.red { color: var(--vault-red); } .stat-value.amber { color: var(--vault-amber); } .stat-value.blue { color: #4488ff; }
   .stat-sub { font-size: 11px; color: var(--text-muted); font-weight: 300; }
   
-  /* --- MAP CSS --- */
   .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 24px; margin-bottom: 20px; }
   .map-wrap { display: flex; align-items: center; gap: 15px; margin: 30px 0 20px; }
   .map-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; color: var(--text-muted); font-weight: bold; }
@@ -99,21 +98,6 @@ const char manager_html[] PROGMEM = R"rawliteral(
   .modal-card p { font-size: 16px; color: var(--text); line-height: 1.5; margin-bottom: 30px; }
   .btn-modal { padding: 16px 30px; background: var(--vault-red); color: white; border: none; border-radius: 4px; font-family: var(--mono); font-size: 16px; font-weight: bold; cursor: pointer; letter-spacing: 0.1em; text-transform: uppercase; }
   .btn-modal:hover { background: #ff1a2e; box-shadow: 0 0 15px rgba(255,51,68,0.5); }
-
-  @media (max-width: 850px) {
-    .main-grid { grid-template-columns: 1fr; gap: 16px; }
-    .stats-row { grid-template-columns: repeat(2, 1fr); gap: 10px; }
-    .page { padding: 16px; }
-    nav { padding: 12px 16px; flex-direction: column; gap: 12px; }
-    .nav-right { width: 100%; justify-content: space-between; }
-  }
-  @media (max-width: 480px) {
-    .stats-row { grid-template-columns: 1fr; }
-    .sensor-row { flex-direction: column; align-items: flex-start; gap: 8px; }
-    .sensor-right { width: 100%; justify-content: space-between; }
-    .modal-card { padding: 24px 16px; }
-    .modal-card h1 { font-size: 24px; }
-  }
 </style>
 </head>
 <body>
@@ -190,13 +174,13 @@ const char manager_html[] PROGMEM = R"rawliteral(
   function tick() { document.getElementById('clock').textContent = new Date().toTimeString().slice(0,8); }
   tick(); setInterval(tick, 1000);
 
-  const SESSION_DURATION = 30; // 30s Demo Time
+  const SESSION_DURATION = 30; 
   let sessionRemaining = 0; let sessionActive = false; let sessionInterval = null;
-  const MAX_ROOM_LENGTH = 100; // Your vault depth in cm
+  const MAX_ROOM_LENGTH = 100; 
 
-  function startSession() { sessionActive = true; sessionRemaining = SESSION_DURATION; sessionInterval = setInterval(tickSession, 1000); updateUI(); }
+  function startSession() { sessionActive = true; sessionInterval = setInterval(tickSession, 1000); updateUI(); }
   function tickSession() {
-    sessionRemaining--;
+    if(sessionRemaining > 0) sessionRemaining--;
     const m = Math.floor(sessionRemaining/60).toString().padStart(2,'0'), s = (sessionRemaining%60).toString().padStart(2,'0');
     document.getElementById('timerDisplay').textContent = m + ':' + s; document.getElementById('timerDisplay').className = 'timer-display';
     document.getElementById('timerBar').style.width = (sessionRemaining/SESSION_DURATION*100) + '%';
@@ -244,12 +228,16 @@ const char manager_html[] PROGMEM = R"rawliteral(
         startSession();
     }
 
+    // FIX 3: Sync timer strictly with ESP32 payload
+    if (data.sessionActive) {
+      sessionRemaining = data.sessionSecs;
+    }
+
     document.getElementById('statDist').textContent = data.distance + ' cm'; document.getElementById('sensorDist').textContent = data.distance + ' cm';
     document.getElementById('statLight').textContent = data.light; document.getElementById('sensorLight').textContent = data.light;
     document.getElementById('statPeople').textContent = data.people; document.getElementById('sensorPeople').textContent = data.people;
     if (data.requestPending && !pendingRequest && !sessionActive) setPendingRequest('Authorized IP');
 
-    // --- MAP LOGIC ---
     const personDot = document.getElementById('mapPerson');
     const mapStatus = document.getElementById('mapStatusText');
     
@@ -274,19 +262,19 @@ const char manager_html[] PROGMEM = R"rawliteral(
       mapStatus.style.color = "var(--text-muted)";
     }
 
-    // Modal Triggers
     if (data.gateBreach) { triggerAlarmModal("GATE"); document.getElementById('statGate').textContent = "BREACHED"; document.getElementById('statGate').className = "stat-value red"; document.getElementById('sensorGate').textContent = "BREACHED!"; } 
     else { document.getElementById('statGate').textContent = data.gateOpen ? 'OPEN' : 'LOCKED'; document.getElementById('statGate').className = "stat-value blue"; document.getElementById('sensorGate').textContent = "ARMED"; }
     
     if (data.vaultBreach) { triggerAlarmModal("VAULT"); document.getElementById('sensorVault').textContent = "BREACHED!"; } 
     else { document.getElementById('sensorVault').textContent = sessionActive ? "DISARMED" : "ARMED"; }
 
-    if (!data.lockdown && isModalOpen) {
-      document.getElementById('alarmModal').classList.remove('active'); isModalOpen = false;
-      addLog('System auto-cleared.', 'ok');
+    // FIX 2: Modal auto-clear strictly tied to physical room occupancy
+    if (isModalOpen && data.people === 0) {
+      document.getElementById('alarmModal').classList.remove('active'); 
+      isModalOpen = false;
+      addLog('Room empty. Alarm cleared.', 'ok');
     }
 
-    // --- ZERO-TRUST UI LOCKDOWN ---
     if (data.lockdown) {
       document.getElementById('btnApprove').textContent = "SYSTEM LOCKED";
       document.getElementById('btnApprove').style.background = "var(--border)";

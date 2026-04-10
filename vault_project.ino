@@ -86,12 +86,12 @@ void setup() {
     particleSensor.setPulseAmplitudeGreen(0);  
   }
 
-  // --- ACCESS POINT SETUP ---
+  // --- ACCESS POINT SETUP (FIX 1: Password Added) ---
   IPAddress local_ip(192, 168, 4, 1);
   IPAddress gateway(192, 168, 4, 1);
   IPAddress subnet(255, 255, 255, 0);
   WiFi.softAPConfig(local_ip, gateway, subnet);
-  WiFi.softAP(WIFI_SSID, NULL); 
+  WiFi.softAP(WIFI_SSID, "vault@iiit"); 
   
   Serial.println("\n--- VAULT SYSTEM ONLINE ---");
 
@@ -112,6 +112,7 @@ void setup() {
 
   // --- API ENDPOINTS ---
   server.on("/request", HTTP_POST, [](AsyncWebServerRequest *req){
+    // ISSUE 4 SKIPPED: Occupancy check is NOT here so teams can enter together.
     if (sessionActive || requestPending) { req->send(403, "text/plain", "Occupied"); return; }
     if (hardwareLockdown) { req->send(403, "text/plain", "Locked"); return; }
     
@@ -158,11 +159,19 @@ void setup() {
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest *req){
     bool isAuth = (req->client()->remoteIP().toString() == authorizedIP);
     
+    // FIX 3: Server-side Session Timer
+    unsigned long sessionSecs = 0;
+    if (sessionActive) {
+      unsigned long elapsed = millis() - sessionTimer;
+      sessionSecs = elapsed < SESSION_DURATION ? (SESSION_DURATION - elapsed) / 1000 : 0;
+    }
+    
     String json = "{";
     json += "\"distance\":" + String(currentDistance) + ",";
     json += "\"light\":" + String(currentLight) + ",";
     json += "\"people\":" + String(occupancy) + ",";
     json += "\"sessionActive\":" + String(sessionActive ? "true" : "false") + ",";
+    json += "\"sessionSecs\":" + String(sessionSecs) + ",";
     json += "\"isAuthorizedUser\":" + String(isAuth ? "true" : "false") + ",";
     json += "\"requestPending\":" + String(requestPending ? "true" : "false") + ",";
     json += "\"lockdown\":" + String(hardwareLockdown ? "true" : "false") + ",";
@@ -247,18 +256,21 @@ void loop() {
   }
   prevIR1 = currIR1; prevIR2 = currIR2;
 
-  // --- 5. VAULT SENSORS ---
-  digitalWrite(TRIG_PIN, LOW); delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10); digitalWrite(TRIG_PIN, LOW);
-  long duration = pulseIn(ECHO_PIN, HIGH, 25000); 
-  currentDistance = (duration > 0) ? (duration * 0.0343) / 2.0 : 999;
-  currentLight = digitalRead(LDR_PIN); 
+  // --- 5. VAULT SENSORS (FIX 5: Non-blocking millis) ---
+  static unsigned long lastSensorRead = 0;
+  if (currentMillis - lastSensorRead >= 100) {
+    lastSensorRead = currentMillis;
+    
+    digitalWrite(TRIG_PIN, LOW); delayMicroseconds(2);
+    digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10); digitalWrite(TRIG_PIN, LOW);
+    long duration = pulseIn(ECHO_PIN, HIGH, 25000); 
+    currentDistance = (duration > 0) ? (duration * 0.0343) / 2.0 : 999;
+    currentLight = digitalRead(LDR_PIN); 
 
-  if (!sessionActive && !isEgressing) {
-    if ((currentDistance > 0 && currentDistance < DISTANCE_THRESHOLD) || (currentLight == 0)) {
-      if (!vaultBreach) { vaultBreach = true; hardwareLockdown = true; }
-    }
-  } else { vaultBreach = false; }
-
-  delay(50); 
+    if (!sessionActive && !isEgressing) {
+      if ((currentDistance > 0 && currentDistance < DISTANCE_THRESHOLD) || (currentLight == 0)) {
+        if (!vaultBreach) { vaultBreach = true; hardwareLockdown = true; }
+      }
+    } else { vaultBreach = false; }
+  }
 }

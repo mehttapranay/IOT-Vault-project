@@ -76,7 +76,6 @@ const char* client_html PROGMEM = R"rawliteral(
     });
   }
 
-  // NEW FEATURE: Early Exit Backend Call
   function secureVault() {
     fetch('/end_session').then(() => {
       sActive = false;
@@ -87,7 +86,6 @@ const char* client_html PROGMEM = R"rawliteral(
   function poll() {
     fetch('/status').then(r=>r.json()).then(d=>{
       
-      // --- RECOVERY LOGIC ---
       if(d.lockdown || d.gateBreach || d.vaultBreach) {
           if(!isBreached) { isBreached = true; showS('sBreach'); }
           return; 
@@ -97,17 +95,15 @@ const char* client_html PROGMEM = R"rawliteral(
           isBreached = false; showS('sStatus'); 
       }
 
-      // --- UPDATED SESSION LOGIC (Includes IP Tracking for Bystanders) ---
       if(d.sessionActive) {
           if(d.isAuthorizedUser) {
-              // Only trigger the timer screen if they are the authorized requester
               if(!sActive) { sActive = true; showS('sGrant'); startT(); }
+              // FIX 3: Keep client timer synced perfectly with ESP32
+              document.getElementById('timer').textContent = "00:" + d.sessionSecs.toString().padStart(2,'0');
           } else {
-              // If it's a bystander, ensure they do not see the timer screen
               if(sActive) { sActive = false; }
           }
       } else {
-          // Session ended naturally or early
           if(sActive) { sActive = false; showS('sStatus'); }
       }
 
@@ -116,13 +112,11 @@ const char* client_html PROGMEM = R"rawliteral(
 
       if(!d.requestPending && isWaiting) showS('sStatus');
 
-      // Update Live UI Elements
       document.getElementById('vPpl').textContent = d.people;
       document.getElementById('vAlm').textContent = (d.systemBreach || d.lockdown) ? "BREACHED" : "SECURE";
       
       const btn = document.getElementById('reqBtn');
       
-      // --- CORRECTED BUTTON LOGIC ---
       if(d.sessionActive && !isGranted) { 
           btn.textContent = "VAULT IN USE"; 
           btn.disabled = true; btn.style.opacity = "0.5";
@@ -147,11 +141,9 @@ const char* client_html PROGMEM = R"rawliteral(
     const itv = setInterval(()=>{
       rem--;
       if (rem < 0) rem = 0;
-      document.getElementById('timer').textContent = "00:" + rem.toString().padStart(2,'0');
       if(rem <= 0 || !sActive) {
           clearInterval(itv);
           sActive = false;
-          // Prevent screen flicker if they already switched screens
           if(document.getElementById('sGrant').classList.contains('active')) {
             showS('sStatus');
           }
