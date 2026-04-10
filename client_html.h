@@ -46,6 +46,7 @@ const char* client_html PROGMEM = R"rawliteral(
   <div class="screen" id="sGrant">
     <h2 style="color:var(--v-green)">GRANTED</h2>
     <div class="timer" id="timer">00:30</div>
+    <button class="btn" style="background:var(--v-red); color:#fff;" onclick="secureVault()">SECURE VAULT NOW</button>
   </div>
 
   <div class="screen" id="sBreach">
@@ -75,6 +76,14 @@ const char* client_html PROGMEM = R"rawliteral(
     });
   }
 
+  // NEW FEATURE: Early Exit Backend Call
+  function secureVault() {
+    fetch('/end_session').then(() => {
+      sActive = false;
+      showS('sStatus');
+    });
+  }
+
   function poll() {
     fetch('/status').then(r=>r.json()).then(d=>{
       
@@ -88,9 +97,19 @@ const char* client_html PROGMEM = R"rawliteral(
           isBreached = false; showS('sStatus'); 
       }
 
-      // Handle Session Transitions
-      if(d.sessionActive && !sActive) { sActive = true; showS('sGrant'); startT(); }
-      if(!d.sessionActive && sActive) { sActive = false; showS('sStatus'); }
+      // --- UPDATED SESSION LOGIC (Includes IP Tracking for Bystanders) ---
+      if(d.sessionActive) {
+          if(d.isAuthorizedUser) {
+              // Only trigger the timer screen if they are the authorized requester
+              if(!sActive) { sActive = true; showS('sGrant'); startT(); }
+          } else {
+              // If it's a bystander, ensure they do not see the timer screen
+              if(sActive) { sActive = false; }
+          }
+      } else {
+          // Session ended naturally or early
+          if(sActive) { sActive = false; showS('sStatus'); }
+      }
 
       const isWaiting = document.getElementById('sWait').classList.contains('active');
       const isGranted = document.getElementById('sGrant').classList.contains('active');
@@ -109,17 +128,14 @@ const char* client_html PROGMEM = R"rawliteral(
           btn.disabled = true; btn.style.opacity = "0.5";
       }
       else if(d.lockdown) { 
-          // Only lock out if there is a HARDWARE LOCKDOWN (Intruder inside)
           btn.textContent = "SYSTEM LOCKED"; 
           btn.disabled = true; btn.style.opacity = "0.5";
       }
       else if(d.requestPending && !isWaiting) { 
-          // Block if someone else already sent a request
           btn.textContent = "PENDING..."; 
           btn.disabled = true; btn.style.opacity = "0.5";
       }
       else { 
-          // Room is either empty OR you just entered legally
           btn.textContent = "REQUEST ACCESS"; 
           btn.disabled = false; btn.style.opacity = "1";
       }
@@ -135,7 +151,10 @@ const char* client_html PROGMEM = R"rawliteral(
       if(rem <= 0 || !sActive) {
           clearInterval(itv);
           sActive = false;
-          showS('sStatus');
+          // Prevent screen flicker if they already switched screens
+          if(document.getElementById('sGrant').classList.contains('active')) {
+            showS('sStatus');
+          }
       }
     }, 1000);
   }

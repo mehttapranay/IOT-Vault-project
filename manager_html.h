@@ -1,4 +1,4 @@
-const char* manager_html PROGMEM = R"rawliteral(
+const char manager_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -79,6 +79,10 @@ const char* manager_html PROGMEM = R"rawliteral(
   .btn-approve:hover { background: var(--vault-green-dim); } .btn-approve:disabled { opacity: 0.3; pointer-events: none; }
   .btn-deny { flex: 1; padding: 11px; background: transparent; color: var(--vault-red); border: 1px solid rgba(255,51,68,0.35); border-radius: 3px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; cursor: pointer; transition: background 0.2s; text-transform: uppercase; }
   .btn-deny:hover { background: rgba(255,51,68,0.08); } .btn-deny:disabled { opacity: 0.3; pointer-events: none; }
+  
+  .btn-override { padding: 11px; background: transparent; color: var(--vault-amber); border: 1px solid rgba(255,170,0,0.35); border-radius: 3px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; cursor: pointer; transition: background 0.2s; text-transform: uppercase; width: 100%; margin-bottom: 10px;}
+  .btn-override:hover { background: rgba(255,170,0,0.08); }
+
   .session-box { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 20px; animation: fadeUp 0.5s 0.2s ease both; }
   .timer-display { font-family: var(--mono); font-size: 42px; color: var(--vault-amber); text-align: center; margin: 16px 0; letter-spacing: 0.04em; }
   .timer-display.inactive { color: var(--text-muted); font-size: 28px; }
@@ -96,7 +100,6 @@ const char* manager_html PROGMEM = R"rawliteral(
   .btn-modal { padding: 16px 30px; background: var(--vault-red); color: white; border: none; border-radius: 4px; font-family: var(--mono); font-size: 16px; font-weight: bold; cursor: pointer; letter-spacing: 0.1em; text-transform: uppercase; }
   .btn-modal:hover { background: #ff1a2e; box-shadow: 0 0 15px rgba(255,51,68,0.5); }
 
-  /* Mobile Responsive Queries */
   @media (max-width: 850px) {
     .main-grid { grid-template-columns: 1fr; gap: 16px; }
     .stats-row { grid-template-columns: repeat(2, 1fr); gap: 10px; }
@@ -174,6 +177,7 @@ const char* manager_html PROGMEM = R"rawliteral(
       <div class="panel">
         <div class="panel-title">Manual Controls</div>
         <div style="display:flex;flex-direction:column;gap:10px;">
+          <button class="btn-override" onclick="overrideGate()">🔓 EMERGENCY GATE RELEASE</button>
           <button class="btn-deny" onclick="forceReset()" style="width:100%;border-color:rgba(90,98,114,0.4);color:var(--text-muted)">FORCE RESET SYSTEM</button>
         </div>
       </div>
@@ -210,7 +214,9 @@ const char* manager_html PROGMEM = R"rawliteral(
   function approveAccess() { pendingRequest = false; resetRequest(); fetch('/approve').catch(()=>{}); startSession(); }
   function denyAccess() { pendingRequest = false; resetRequest(); fetch('/deny').catch(()=>{}); }
   function resetRequest() { document.getElementById('requestCard').className = 'request-card'; document.getElementById('reqBadge').textContent = 'NO REQUEST'; document.getElementById('reqBadge').className = 'req-badge badge-none'; document.getElementById('reqInfo').textContent = 'Waiting for client to submit a request...'; document.getElementById('btnApprove').disabled = true; document.getElementById('btnDeny').disabled = true; }
+  
   function forceReset() { if(confirm('Reset system?')) { endSession(); resetRequest(); fetch('/reset').catch(()=>{}); } }
+  function overrideGate() { if(confirm('Force gate open for 5 seconds?')) fetch('/override_gate').catch(()=>{}); }
 
   let isModalOpen = false;
   function triggerAlarmModal(type) {
@@ -233,13 +239,15 @@ const char* manager_html PROGMEM = R"rawliteral(
   function updateSensors(data) {
     if (!data.sessionActive && sessionActive) {
       endSession(); 
-      addLog('Session ended or auto-cleared.', 'info');
+      addLog('Session ended remotely (early exit/timeout).', 'info');
+    } else if (data.sessionActive && !sessionActive) {
+        startSession();
     }
 
     document.getElementById('statDist').textContent = data.distance + ' cm'; document.getElementById('sensorDist').textContent = data.distance + ' cm';
     document.getElementById('statLight').textContent = data.light; document.getElementById('sensorLight').textContent = data.light;
     document.getElementById('statPeople').textContent = data.people; document.getElementById('sensorPeople').textContent = data.people;
-    if (data.requestPending && !pendingRequest && !sessionActive) setPendingRequest('Client device');
+    if (data.requestPending && !pendingRequest && !sessionActive) setPendingRequest('Authorized IP');
 
     // --- MAP LOGIC ---
     const personDot = document.getElementById('mapPerson');
@@ -251,13 +259,13 @@ const char* manager_html PROGMEM = R"rawliteral(
       if (pct > 100) pct = 100; 
       personDot.style.right = pct + '%';
       
-      if (data.lockdown || data.systemBreach) {
+      if (data.lockdown) {
         personDot.className = 'map-person breach';
         mapStatus.textContent = "INTRUDER TRACKED AT " + data.distance + " cm";
         mapStatus.style.color = "var(--vault-red)";
       } else {
         personDot.className = 'map-person';
-        mapStatus.textContent = "Authorized user at " + data.distance + " cm from safe.";
+        mapStatus.textContent = "Authorized occupant at " + data.distance + " cm from safe.";
         mapStatus.style.color = "var(--vault-amber)";
       }
     } else {
@@ -266,15 +274,16 @@ const char* manager_html PROGMEM = R"rawliteral(
       mapStatus.style.color = "var(--text-muted)";
     }
 
+    // Modal Triggers
     if (data.gateBreach) { triggerAlarmModal("GATE"); document.getElementById('statGate').textContent = "BREACHED"; document.getElementById('statGate').className = "stat-value red"; document.getElementById('sensorGate').textContent = "BREACHED!"; } 
     else { document.getElementById('statGate').textContent = data.gateOpen ? 'OPEN' : 'LOCKED'; document.getElementById('statGate').className = "stat-value blue"; document.getElementById('sensorGate').textContent = "ARMED"; }
     
     if (data.vaultBreach) { triggerAlarmModal("VAULT"); document.getElementById('sensorVault').textContent = "BREACHED!"; } 
     else { document.getElementById('sensorVault').textContent = sessionActive ? "DISARMED" : "ARMED"; }
 
-    if (!data.systemBreach && isModalOpen) {
+    if (!data.lockdown && isModalOpen) {
       document.getElementById('alarmModal').classList.remove('active'); isModalOpen = false;
-      addLog('Threat left the room. System auto-cleared.', 'ok');
+      addLog('System auto-cleared.', 'ok');
     }
 
     // --- ZERO-TRUST UI LOCKDOWN ---
